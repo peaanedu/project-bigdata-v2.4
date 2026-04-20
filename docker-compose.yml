@@ -1,0 +1,496 @@
+x-hadoop-build: &hadoop-build
+  context: ./hadoop
+  dockerfile: Dockerfile
+
+x-hive-build: &hive-build
+  context: ./hive
+  dockerfile: Dockerfile
+
+x-common-env: &common-env
+  TZ: ${TZ:-Asia/Phnom_Penh}
+
+x-hadoop-common: &hadoop-common
+  build: *hadoop-build
+  image: project-bigdata/hadoop:3.3.6
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment:
+    <<: *common-env
+    CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+  volumes:
+    - ./hadoop/conf:/opt/hadoop/etc/hadoop:ro
+    - ./scripts:/opt/platform/scripts:ro
+    - ./datasets:/datasets:ro
+  networks:
+    - bigdata
+
+x-hive-common: &hive-common
+  build: *hive-build
+  image: project-bigdata/hive:4.0.0
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment:
+    <<: *common-env
+    DB_DRIVER: postgres
+    HIVE_CUSTOM_CONF_DIR: /hive_custom_conf
+    SERVICE_OPTS: >-
+      -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+      -Djavax.jdo.option.ConnectionUserName=${POSTGRES_USER}
+      -Djavax.jdo.option.ConnectionPassword=${POSTGRES_PASSWORD}
+  volumes:
+    - ./hive/conf:/hive_custom_conf:ro
+    - ./scripts:/opt/platform/scripts:ro
+    - ./datasets:/datasets:ro
+  networks:
+    - bigdata
+
+networks:
+  bigdata:
+    name: project-bigdata-net
+    driver: bridge
+
+volumes:
+  postgres_data:
+  namenode_data:
+  datanode1_data:
+  datanode2_data:
+  datanode3_data:
+  spark_events:
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      <<: *common-env
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - bigdata
+
+  namenode:
+    <<: *hadoop-common
+    container_name: namenode
+    hostname: namenode
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: namenode
+    ports:
+      - "${NAMENODE_RPC_PORT:-9000}:9000"
+      - "${NAMENODE_UI_PORT:-9870}:9870"
+    volumes:
+      - ./hadoop/conf:/opt/hadoop/etc/hadoop:ro
+      - ./scripts:/opt/platform/scripts:ro
+      - ./datasets:/datasets:ro
+      - namenode_data:/var/lib/hadoop/hdfs/namenode
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:9870"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  datanode1:
+    <<: *hadoop-common
+    container_name: datanode1
+    hostname: datanode1
+    depends_on:
+      namenode:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: datanode
+    ports:
+      - "${DATANODE1_UI_PORT:-9864}:9864"
+    volumes:
+      - ./hadoop/conf:/opt/hadoop/etc/hadoop:ro
+      - ./scripts:/opt/platform/scripts:ro
+      - ./datasets:/datasets:ro
+      - datanode1_data:/var/lib/hadoop/hdfs/datanode
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:9864"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  datanode2:
+    <<: *hadoop-common
+    container_name: datanode2
+    hostname: datanode2
+    depends_on:
+      namenode:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: datanode
+    ports:
+      - "${DATANODE2_UI_PORT:-9865}:9864"
+    volumes:
+      - ./hadoop/conf:/opt/hadoop/etc/hadoop:ro
+      - ./scripts:/opt/platform/scripts:ro
+      - ./datasets:/datasets:ro
+      - datanode2_data:/var/lib/hadoop/hdfs/datanode
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:9864"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  datanode3:
+    <<: *hadoop-common
+    container_name: datanode3
+    hostname: datanode3
+    depends_on:
+      namenode:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: datanode
+    ports:
+      - "${DATANODE3_UI_PORT:-9866}:9864"
+    volumes:
+      - ./hadoop/conf:/opt/hadoop/etc/hadoop:ro
+      - ./scripts:/opt/platform/scripts:ro
+      - ./datasets:/datasets:ro
+      - datanode3_data:/var/lib/hadoop/hdfs/datanode
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:9864"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  resourcemanager:
+    <<: *hadoop-common
+    container_name: resourcemanager
+    hostname: resourcemanager
+    depends_on:
+      namenode:
+        condition: service_healthy
+      datanode1:
+        condition: service_healthy
+      datanode2:
+        condition: service_healthy
+      datanode3:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: resourcemanager
+    ports:
+      - "${RESOURCEMANAGER_UI_PORT:-8088}:8088"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:8088/ws/v1/cluster/info"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  nodemanager1:
+    <<: *hadoop-common
+    container_name: nodemanager1
+    hostname: nodemanager1
+    depends_on:
+      resourcemanager:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: nodemanager
+    ports:
+      - "${NODEMANAGER1_UI_PORT:-8042}:8042"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:8042"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  nodemanager2:
+    <<: *hadoop-common
+    container_name: nodemanager2
+    hostname: nodemanager2
+    depends_on:
+      resourcemanager:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: nodemanager
+    ports:
+      - "${NODEMANAGER2_UI_PORT:-8043}:8042"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:8042"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  nodemanager3:
+    <<: *hadoop-common
+    container_name: nodemanager3
+    hostname: nodemanager3
+    depends_on:
+      resourcemanager:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: nodemanager
+    ports:
+      - "${NODEMANAGER3_UI_PORT:-8044}:8042"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:8042"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  historyserver:
+    <<: *hadoop-common
+    container_name: historyserver
+    hostname: historyserver
+    depends_on:
+      resourcemanager:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: historyserver
+    ports:
+      - "${HISTORYSERVER_UI_PORT:-8188}:8188"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:8188"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  hdfs-init:
+    <<: *hadoop-common
+    container_name: hdfs-init
+    restart: "no"
+    depends_on:
+      namenode:
+        condition: service_healthy
+      datanode1:
+        condition: service_healthy
+      datanode2:
+        condition: service_healthy
+      datanode3:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      HADOOP_ROLE: client
+    command: ["/bin/bash", "/opt/platform/scripts/init-hdfs.sh"]
+
+  hive-metastore:
+    <<: *hive-common
+    container_name: hive-metastore
+    hostname: hive-metastore
+    depends_on:
+      postgres:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      hdfs-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SKIP_SCHEMA_INIT: "false"
+      HIVE_CUSTOM_CONF_DIR: /hive_custom_conf
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionUserName=${POSTGRES_USER}
+        -Djavax.jdo.option.ConnectionPassword=${POSTGRES_PASSWORD}
+    ports:
+      - "${HIVE_METASTORE_PORT:-9083}:9083"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-tcp.sh 127.0.0.1 9083"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+
+  hive-server:
+    <<: *hive-common
+    container_name: hive-server
+    hostname: hive-server
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SERVICE_NAME: hiveserver2
+      DB_DRIVER: postgres
+      SKIP_SCHEMA_INIT: "true"
+      HIVE_CUSTOM_CONF_DIR: /hive_custom_conf
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionUserName=${POSTGRES_USER}
+        -Djavax.jdo.option.ConnectionPassword=${POSTGRES_PASSWORD}
+        -Dhive.metastore.uris=thrift://hive-metastore:9083
+    ports:
+      - "${HIVE_SERVER2_PORT:-10000}:10000"
+      - "${HIVE_HTTP_PORT:-10002}:10002"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-tcp.sh 127.0.0.1 10000"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+
+  spark-master:
+    image: apache/spark:3.5.5-python3
+    container_name: spark-master
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      <<: *common-env
+      SPARK_NO_DAEMONIZE: "true"
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    ports:
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+      - "${SPARK_MASTER_UI_PORT:-8080}:8080"
+    volumes:
+      - ./spark/conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./spark/conf/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
+      - ./datasets:/datasets:ro
+      - spark_events:/tmp/spark-events
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080', timeout=5)\""]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  spark-worker1:
+    image: apache/spark:3.5.5-python3
+    container_name: spark-worker1
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SPARK_NO_DAEMONIZE: "true"
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2G}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --webui-port
+      - "8081"
+      - spark://spark-master:7077
+    ports:
+      - "${SPARK_WORKER1_UI_PORT:-8082}:8081"
+    volumes:
+      - ./spark/conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./spark/conf/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
+      - ./datasets:/datasets:ro
+      - spark_events:/tmp/spark-events
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081', timeout=5)\""]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  spark-worker2:
+    image: apache/spark:3.5.5-python3
+    container_name: spark-worker2
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SPARK_NO_DAEMONIZE: "true"
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2G}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --webui-port
+      - "8081"
+      - spark://spark-master:7077
+    ports:
+      - "${SPARK_WORKER2_UI_PORT:-8083}:8081"
+    volumes:
+      - ./spark/conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./spark/conf/spark-env.sh:/opt/spark/conf/spark-env.sh:ro
+      - ./datasets:/datasets:ro
+      - spark_events:/tmp/spark-events
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081', timeout=5)\""]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  jupyter:
+    build:
+      context: ./jupyter
+      dockerfile: Dockerfile
+    image: project-bigdata/jupyter:3.11-pyspark
+    container_name: jupyter
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      hive-server:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-bigdata123}
+      SPARK_MASTER_URL: spark://spark-master:7077
+      HIVE_METASTORE_URI: thrift://hive-metastore:9083
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    volumes:
+      - ./notebooks:/workspace/notebooks
+      - ./scripts:/workspace/scripts:ro
+      - ./datasets:/workspace/datasets:ro
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "/bin/bash -c '</dev/tcp/127.0.0.1/8888'"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+
+  trino:
+    image: trinodb/trino:472
+    container_name: trino
+    restart: unless-stopped
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+    ports:
+      - "${TRINO_PORT:-8081}:8080"
+    volumes:
+      - ./trino/etc:/etc/trino:ro
+      - ./hadoop/conf:/etc/hadoop:ro
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/v1/info >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
