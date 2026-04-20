@@ -128,7 +128,7 @@ services:
       - ./scripts:/opt/platform/scripts:ro
       - ./datasets:/datasets:ro
       - datanode1_data:/var/lib/hadoop/hdfs/datanode
-     healthcheck:
+    healthcheck:
         test: ["CMD-SHELL", "/opt/platform/scripts/healthcheck-http.sh http://127.0.0.1:9864"]
         interval: 20s
         timeout: 10s
