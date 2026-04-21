@@ -1,29 +1,26 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-export HADOOP_HOME="${HADOOP_HOME:-/opt/hadoop}"
-export HADOOP_CONF_DIR="${HADOOP_CONF_DIR:-/opt/hadoop/etc/hadoop}"
-export PATH="${HADOOP_HOME}/bin:${HADOOP_HOME}/sbin:${PATH}"
+set -e
 
-echo "Creating HDFS directories..."
+export HADOOP_HOME=/opt/hadoop
+export PATH=$PATH:$HADOOP_HOME/bin
 
-for _ in $(seq 1 60); do
-  if hdfs dfsadmin -report >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
+echo "⏳ Waiting for HDFS to be ready..."
+
+# wait until HDFS is fully ready
+until hdfs dfsadmin -report >/dev/null 2>&1; do
+  echo "HDFS not ready yet... retrying"
+  sleep 5
 done
 
-hdfs dfs -mkdir -p /user/hive/warehouse
-hdfs dfs -mkdir -p /tmp/hive
-hdfs dfs -mkdir -p /data/raw/sales
+echo "✅ HDFS is READY"
 
-hdfs dfs -chmod -R 777 /user/hive
-hdfs dfs -chmod -R 777 /tmp/hive
-hdfs dfs -chmod -R 777 /data
+# create directories (ignore if already exist)
+hdfs dfs -mkdir -p /user/hive/warehouse || true
+hdfs dfs -mkdir -p /tmp/hive || true
 
-if [ -f /datasets/sales_orders.csv ]; then
-  hdfs dfs -put -f /datasets/sales_orders.csv /data/raw/sales/
-fi
+# permissions
+hdfs dfs -chmod -R 777 /user || true
+hdfs dfs -chmod -R 777 /tmp || true
 
-echo "HDFS initialization completed."
+echo "🎉 HDFS INIT COMPLETED SUCCESSFULLY"

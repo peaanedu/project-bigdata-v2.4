@@ -295,24 +295,21 @@ services:
       interval: 20s
       timeout: 10s
       retries: 15
-
+      
   hdfs-init:
     <<: *hadoop-common
     container_name: hdfs-init
     restart: "no"
     depends_on:
-      namenode:
-        condition: service_healthy
-      datanode1:
-        condition: service_healthy
-      datanode2:
-        condition: service_healthy
-      datanode3:
-        condition: service_healthy
+      - namenode
+      - datanode1
+      - datanode2
+      - datanode3
     environment:
       <<: *common-env
       HADOOP_ROLE: client
-    command: ["/bin/bash", "/opt/platform/scripts/init-hdfs.sh"]
+    command: >
+      bash -c "/opt/platform/scripts/init-hdfs.sh"
 
   hive-metastore:
     <<: *hive-common
