@@ -258,7 +258,7 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command: >
       export HADOOP_HOME=/opt/hadoop &&
-      export PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin &&
+      export PATH=$$PATH:$$HADOOP_HOME/bin:$$HADOOP_HOME/sbin &&
       echo 'Waiting for HDFS...' &&
       until hdfs dfsadmin -report >/dev/null 2>&1; do
         echo 'HDFS not ready yet...';
@@ -435,37 +435,23 @@ services:
       retries: 15
 
   jupyter:
-    build:
-      context: ./jupyter
-      dockerfile: Dockerfile
-    image: project-bigdata/jupyter:3.11-pyspark
-    container_name: jupyter
-    restart: unless-stopped
-    env_file:
-      - .env
-    depends_on:
-      spark-master:
-        condition: service_healthy
-      hive-server:
-        condition: service_healthy
-    environment:
-      <<: *common-env
-      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-bigdata123}
-      SPARK_MASTER_URL: spark://spark-master:7077
-      HIVE_METASTORE_URI: thrift://hive-metastore:9083
-    ports:
-      - "${JUPYTER_PORT:-8888}:8888"
-    volumes:
-      - ./notebooks:/workspace/notebooks
-      - ./scripts:/workspace/scripts:ro
-      - ./datasets:/workspace/datasets:ro
-    networks:
-      - bigdata
-    healthcheck:
-      test: ["CMD-SHELL", "/bin/bash -c '</dev/tcp/127.0.0.1/8888'"]
-      interval: 20s
-      timeout: 10s
-      retries: 20
+      image: project-bigdata/jupyter:3.11-pyspark
+      container_name: jupyter
+      restart: unless-stopped
+      depends_on:
+        - spark-master
+      environment:
+        JUPYTER_TOKEN: ""
+        SPARK_MASTER_URL: spark://spark-master:7077
+      ports:
+        - "8888:8888"
+      volumes:
+        - ./notebooks:/workspace/notebooks
+        - ./datasets:/workspace/datasets
+      command: >
+        start-notebook.sh --NotebookApp.token='' --allow-root
+      networks:
+        - bigdata
 
   trino:
     image: trinodb/trino:472
