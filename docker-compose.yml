@@ -451,6 +451,8 @@ services:
       - ./notebooks:/workspace/notebooks
       - ./datasets:/workspace/datasets:ro
       - ./scripts:/workspace/scripts:ro
+    networks:          # ✅ ADD THIS BLOCK
+      - bigdata
     command:
       [
         "jupyter",
